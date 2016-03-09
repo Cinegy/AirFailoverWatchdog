@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -12,6 +13,7 @@ using System.ServiceModel;
 using System.ServiceModel.Description;
 using System.ServiceModel.Web;
 using System.Threading;
+using System.Xml.Linq;
 using CommandLine;
 using static System.String;
 
@@ -28,6 +30,9 @@ namespace AirFailoverWatchdog
         private static ServiceHost _serviceHost;
         private static AirFailoverWatchdogApi _airFailoverWatchdogApi;
         private static UdpClient _udpClient = new UdpClient { ExclusiveAddressUse = false };
+
+        private static List<PlayoutEngine> _monitoredEngines = new List<PlayoutEngine>();
+        private static PlayoutEngine _backupEngine = new PlayoutEngine(); 
 
         private static NetworkMetric _networkMetric = new NetworkMetric();
         private static RtpMetric _rtpMetric = new RtpMetric();
@@ -61,30 +66,34 @@ namespace AirFailoverWatchdog
             }
 
             SetupApplication();
-            WorkLoop();
+           // WorkLoop();
         }
 
         private static void SetupApplication()
         {
             Console.Clear();
 
-            if (!IsNullOrWhiteSpace(Options.LogFile))
-            {
-                PrintToConsole("Logging events to file {0}", _logFile);
-            }
-            LogMessage("Logging started.");
+            LoadConfig();
 
-            if (Options.EnableWebServices)
-            {
-                var httpThreadStart = new ThreadStart(delegate
-                {
-                    StartHttpService(Options.ServiceUrl);
-                });
+            Console.ReadLine();
 
-                var httpThread = new Thread(httpThreadStart) { Priority = ThreadPriority.Normal };
+            //if (!IsNullOrWhiteSpace(Options.LogFile))
+            //{
+            //    PrintToConsole("Logging events to file {0}", _logFile);
+            //}
+            //LogMessage("Logging started.");
 
-                httpThread.Start();
-            }
+            //if (Options.EnableWebServices)
+            //{
+            //    var httpThreadStart = new ThreadStart(delegate
+            //    {
+            //        StartHttpService(Options.ServiceUrl);
+            //    });
+
+            //    var httpThread = new Thread(httpThreadStart) { Priority = ThreadPriority.Normal };
+
+            //    httpThread.Start();
+            //}
 
 
         }
@@ -98,14 +107,14 @@ namespace AirFailoverWatchdog
 
                 if (runningTime.Milliseconds < 20)
                 {
-                    Console.Clear();
+                   // Console.Clear();
                 }
 
                 Console.SetCursorPosition(0, 0);
 
                 PrintToConsole("Running time: {0:hh\\:mm\\:ss}\t\t\n", runningTime);
 
-             Thread.Sleep(20);
+                Thread.Sleep(20);
             }
         }
 
@@ -214,6 +223,26 @@ namespace AirFailoverWatchdog
 
         //    LogMessage("Logging stopped.");
         //}
+
+        private static void LoadConfig()
+        {
+            var doc = XElement.Load("settings.xml");
+
+            var engines = doc.Descendants("configuration").Descendants("playoutEngines").Descendants("engine");
+
+            foreach (var engine in engines)
+            {
+                var playoutEngine = new PlayoutEngine
+                {
+                    Name = engine.Attribute("name").Value,
+                    Playlist = engine.Attribute("playlist").Value,
+                    MulticastUrl = engine.Attribute("multicastUrl").Value
+                };
+                _monitoredEngines.Add(playoutEngine);
+            }
+
+
+        }
 
         private static void StartListeningToNetwork(string multicastAddress, int multicastGroup,
             string listenAdapter = "")

@@ -27,7 +27,7 @@ namespace AirFailoverWatchdog
         public string ServiceUrl { get; set; }
 
 
-        [Option('c', "configpath", Required = true,
+        [Option('c', "configpath", Required = false,
         HelpText = "Path to the config file to load")]
         public string ConfigPath { get; set; }
 

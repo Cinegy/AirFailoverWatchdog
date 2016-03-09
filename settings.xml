@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<appSettings>
+  <configuration>
+    <playoutEngines>
+      <engine name="Air1" playlist="c:\data\air1.mcractive" multicastUrl="rtp://@239.1.1.1:1234"/>
+      <engine name="Air2" playlist="c:\data\air2.mcractive" multicastUrl="rtp://@239.1.1.2:1234"/>
+    </playoutEngines>
+    <backupEngine>
+      <engine name="Air4" playlist="c:\data\air4.mcractive" multicastUrl="rtp://@239.1.1.2:1234"/>
+    </backupEngine>
+  </configuration>
+</appSettings>
