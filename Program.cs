@@ -21,28 +21,26 @@ namespace AirFailoverWatchdog
 {
     internal class Program
     {
-        private static bool _receiving;
-        private static bool _suppressConsoleOutput;
         private static readonly Options Options = new Options();
-        private static DateTime _startTime = DateTime.UtcNow;
-        private static string _logFile;
+        private static DateTime _startTime = DateTime.Now;
         private static bool _pendingExit;
         private static ServiceHost _serviceHost;
         private static AirFailoverWatchdogApi _airFailoverWatchdogApi;
-        private static UdpClient _udpClient = new UdpClient { ExclusiveAddressUse = false };
-
         private static List<PlayoutEngine> _monitoredEngines = new List<PlayoutEngine>();
-        private static PlayoutEngine _backupEngine = new PlayoutEngine(); 
+        private static PlayoutEngine _backupEngine = new PlayoutEngine();
+        private static PlayoutEngine _lastEngineLoadedOntoBackup;
+        private static List<Thread> _monitoringThreads = new List<Thread>();
+        private static TimeSpan _airTimeout = new TimeSpan(0, 0, 5);
+        private static TimeSpan _airRecoveryTime = new TimeSpan(0,0,10);
 
-        private static NetworkMetric _networkMetric = new NetworkMetric();
-        private static RtpMetric _rtpMetric = new RtpMetric();
+        private static PlayoutEngine _currentFailedOverEngine = null;
 
         static void Main(string[] args)
         {
 
             Console.CancelKeyPress += Console_CancelKeyPress;
 
-            Console.WriteLine("Cinegy Simple RTP monitoring tool v1.0.0 ({0})\n",
+            Console.WriteLine("Cinegy Air Watchdog Failover Tool v1.0.0 ({0})\n",
                 File.GetCreationTime(Assembly.GetExecutingAssembly().Location));
 
             try
@@ -54,19 +52,13 @@ namespace AirFailoverWatchdog
                 Console.WriteLine("Failed to increase console size - probably screen resolution is low");
             }
 
-            if (!Parser.Default.ParseArguments(args, Options))
-            {
-                Console.WriteLine(
-                    "\nThis application must have a configuration file specified for operation.");
-
-                Console.WriteLine("\nHit enter to quit");
-
-                Console.ReadLine();
-                Environment.Exit(500);
-            }
-
             SetupApplication();
-           // WorkLoop();
+            
+            MainLoop();
+
+            LogMessage("Application terminated on request - press enter to close");
+            Console.ReadLine();
+            Environment.Exit(-1);
         }
 
         private static void SetupApplication()
@@ -75,13 +67,31 @@ namespace AirFailoverWatchdog
 
             LoadConfig();
 
-            Console.ReadLine();
+            if (!IsNullOrWhiteSpace(Options.LogFile))
+            {
+                LogMessage("Logging events to file {0}", Options.LogFile);
+            }
+            LogMessage("Logging started.");
 
-            //if (!IsNullOrWhiteSpace(Options.LogFile))
-            //{
-            //    PrintToConsole("Logging events to file {0}", _logFile);
-            //}
-            //LogMessage("Logging started.");
+            //for each air server to be watched, spin off a monitoring thread to check continuous multicast input
+
+            foreach (var engine in _monitoredEngines)
+            {
+                LogMessage("Monitoring engine {0} on address {1}, port {2}", engine.Name, engine.multicastAddress, engine.multicastGroupPort);
+
+                var ts = new ThreadStart(delegate
+                {
+                    EngineMonitoringThreadWorker(engine);
+                });
+
+                var engineMonitoringThread = new Thread(ts) { Priority = ThreadPriority.AboveNormal };
+
+                engineMonitoringThread.Start();
+
+                _monitoringThreads.Add(engineMonitoringThread);
+            }
+        
+            //todo: review web services now the model is a little more developed, and activate
 
             //if (Options.EnableWebServices)
             //{
@@ -98,135 +108,214 @@ namespace AirFailoverWatchdog
 
         }
 
-        private static void WorkLoop()
+        private static void EngineMonitoringThreadWorker(PlayoutEngine engine)
         {
-           
-            while (!_pendingExit)
+            var listenAdapter = Options.AdapterAddress;
+
+            //   private static void StartListeningToNetwork(string multicastAddress, int multicastGroup, string listenAdapter = "")
+            var listenAddress = IsNullOrEmpty(listenAdapter) ? IPAddress.Any : IPAddress.Parse(listenAdapter);
+
+            var localEp = new IPEndPoint(listenAddress, engine.multicastGroupPort);
+
+
+            var _udpClient = new UdpClient { ExclusiveAddressUse = false };
+            using (_udpClient)
             {
-                var runningTime = DateTime.UtcNow.Subtract(_startTime);
+                _udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                _udpClient.Client.ReceiveBufferSize = 1024 * 256;
+                _udpClient.Client.Bind(localEp);
+               
+                var parsedMcastAddr = IPAddress.Parse(engine.multicastAddress);
+                _udpClient.JoinMulticastGroup(parsedMcastAddr);
 
-                if (runningTime.Milliseconds < 20)
+                while (true)
                 {
-                   // Console.Clear();
+                    var data = _udpClient.Receive(ref localEp);
+                 
+                    if (data == null) continue;
+                    try
+                    {
+                        engine.lastMonitoredPacketTime = DateTime.Now;
+                        engine.networkFailureCount = 0;
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage(
+                            $@"Network problem with engine {engine.Name} - retrying (attempt {
+                                engine.networkFailureCount++})");
+
+                        if (engine.networkFailureCount < 5)
+                        {
+                            Thread.Sleep(1000);
+                            try
+                            {
+                                _udpClient.Client.Close();
+                                _udpClient.Close();
+                            }
+                            catch
+                            {
+                                //above was just housekeeping, should not matter if it fails
+                            }
+
+                            //call recursively to set up again, see if it is all happy now.
+                            EngineMonitoringThreadWorker(engine);
+                        }
+                        else
+                        {
+                            LogMessage($@"Too many network failures for engine {engine.Name}");
+                            throw new Exception($@"Engine network monitoring failure - inner exception: {ex.Message}");
+                        }
+                    }
                 }
-
-                Console.SetCursorPosition(0, 0);
-
-                PrintToConsole("Running time: {0:hh\\:mm\\:ss}\t\t\n", runningTime);
-
-                Thread.Sleep(20);
             }
         }
 
-        //private static void WorkLoop(Options _options)
-        //{
-        //    Console.Clear();
+        private static void MainLoop()
+        {
+            while (!_pendingExit)
+            {
+                var runningTime = DateTime.Now.Subtract(_startTime);
 
-        //    if (!_receiving)
-        //    {
-        //        _receiving = true;
-        //        _logFile = _options.LogFile;
-        //        _suppressConsoleOutput = _options.SuppressOutput;
+                Console.Clear();
 
-        //        if (!IsNullOrWhiteSpace(_logFile))
-        //        {
-        //            PrintToConsole("Logging events to file {0}", _logFile);
-        //        }
-        //        LogMessage("Logging started.");
+                Console.SetCursorPosition(0, 0);
 
-        //        if (_options.EnableWebServices)
-        //        {
-        //            var httpThreadStart = new ThreadStart(delegate
-        //            {
-        //                StartHttpService(_options.ServiceUrl);
-        //            });
+                Console.WriteLine("Running time: {0:hh\\:mm\\:ss}\t\t\n", runningTime);
 
-        //            var httpThread = new Thread(httpThreadStart) { Priority = ThreadPriority.Normal };
+                foreach (var engine in _monitoredEngines)
+                {
+                    Console.WriteLine("Monitoring engine {0} on address {1}, port {2} - last multicast data: {3}", engine.Name,
+                        engine.multicastAddress, engine.multicastGroupPort, engine.lastMonitoredPacketTime);
+                }
 
-        //            httpThread.Start();
-        //        }
+                if(_lastEngineLoadedOntoBackup!=null)
+                {
+                    Console.WriteLine("Last engine failed over to {0} backup engine : {1} at {2}", _backupEngine.Name, _lastEngineLoadedOntoBackup.Name, _lastEngineLoadedOntoBackup.lastFailoverTime);
+                }
 
-        //        SetupMetrics();
-        //        StartListeningToNetwork(_options.MulticastAddress, _options.MulticastGroup, _options.AdapterAddress);
-        //    }
+                CheckForStalledEngines();
 
-        //    Console.Clear();
+                CheckForEngineRecovery();
 
-        //    while (!_pendingExit)
-        //    {
-        //        var runningTime = DateTime.UtcNow.Subtract(_startTime);
+                if (_currentFailedOverEngine != null)
+                {
+                    Console.WriteLine($@"Air engine {_currentFailedOverEngine.Name} is currently in fail over state (and will block any other fail over).");
+                }
 
-        //        //causes occasional total refresh to erase glitches that build up
-        //        if (runningTime.Milliseconds < 20)
-        //        {
-        //            Console.Clear();
-        //        }
+                Thread.Sleep(200);
+            }
 
-        //        if (!_suppressConsoleOutput)
+            foreach (var monitoringThread in _monitoringThreads)
+            {
+                if (monitoringThread.IsAlive)
+                {
+                    monitoringThread.Abort();
+                }
+            }
+        }
 
-        //        {
-        //            Console.SetCursorPosition(0, 0);
+        private static void CheckForStalledEngines()
+        {
+            foreach (var monitoredEngine in _monitoredEngines)
+            {
+                if (monitoredEngine.lastMonitoredPacketTime == new DateTime() != true)
+                {
+                    var timeSinceLastPacket = DateTime.Now.Subtract(monitoredEngine.lastMonitoredPacketTime);
+                    if (timeSinceLastPacket > _airTimeout)
+                    {
+                        if (!monitoredEngine.isStalled)
+                        {
+                            monitoredEngine.isStalled = true;
 
-        //            PrintToConsole("URL: rtp://@{0}:{1}\tRunning time: {2:hh\\:mm\\:ss}\t\t\n", _options.MulticastAddress,
-        //                _options.MulticastGroup, runningTime);
-        //            PrintToConsole(
-        //                "Network Details\n----------------\nTotal Packets Rcvd: {0} \tBuffer Usage: {1:0.00}%\t\t\nTotal Data (MB): {2}\t\tPackets per sec:{3}",
-        //                _networkMetric.TotalPackets, _networkMetric.NetworkBufferUsage, _networkMetric.TotalData / 1048576,
-        //                _networkMetric.PacketsPerSecond);
-        //            PrintToConsole("Time Between Packets (ms): {0} \tShortest/Longest: {1}/{2}",
-        //                _networkMetric.TimeBetweenLastPacket, _networkMetric.ShortestTimeBetweenPackets,
-        //                _networkMetric.LongestTimeBetweenPackets);
-        //            PrintToConsole("Bitrates (Mbps): {0:0.00}/{1:0.00}/{2:0.00}/{3:0.00} (Current/Avg/Peak/Low)\t\t\t",
-        //                (_networkMetric.CurrentBitrate / 131072.0), _networkMetric.AverageBitrate / 131072.0,
-        //                (_networkMetric.HighestBitrate / 131072.0), (_networkMetric.LowestBitrate / 131072.0));
-        //            PrintToConsole(
-        //                "\nRTP Details\n----------------\nSeq Num: {0}\tMin Lost Pkts: {1}\nTimestamp: {2}\tSSRC: {3}\t",
-        //                _rtpMetric.LastSequenceNumber, _rtpMetric.MinLostPackets, _rtpMetric.LastTimestamp, _rtpMetric.Ssrc);
+                            LogMessage($@"Air engine {monitoredEngine.Name} has stalled for {timeSinceLastPacket}");
+                        }
+                        else
+                        {
+                            Console.WriteLine($@"Air engine {monitoredEngine.Name} has stalled for {timeSinceLastPacket}");
+                        }
 
-        //            if (null != _serviceDescriptionTable)
-        //            {
-        //                lock (_serviceDescriptionTableLock)
-        //                {
-        //                    if (_serviceDescriptionTable.Sections != null)
-        //                    {
-        //                        foreach (ServiceDescriptionTable.Section section in _serviceDescriptionTable.Sections)
-        //                        {
-        //                            PrintToConsole(
-        //                                "Service Information\n----------------\nService Name {0}\tService Provider {1}\n\t\t\t\t\t\t\t\t\t\t",
-        //                                section.ServiceName, section.ServiceProviderName);
-        //                        }
-        //                    }
-        //                }
-        //            }
+                        monitoredEngine.lastStallTime = DateTime.Now;
 
-        //            PrintToConsole("\nTS Details\n----------------");
-        //            lock (_tsMetrics)
-        //            {
-        //                var patMetric = _tsMetrics.FirstOrDefault(m => m.IsProgAssociationTable);
-        //                if (patMetric?.ProgAssociationTable.ProgramNumbers != null)
-        //                {
-        //                    PrintToConsole("Unique PID count: {0}\t\tProgram Count: {1}\t\t\nShowing up to 10 PID streams in table:", _tsMetrics.Count,
-        //                        patMetric.ProgAssociationTable.ProgramNumbers.Length);
-        //                }
+                        if (_currentFailedOverEngine == null)
+                        {
+                           TriggerEngineFailover(monitoredEngine);
+                        }
+                        else if(_currentFailedOverEngine != monitoredEngine)
+                        {
+                            Console.WriteLine("Engine {0} blocked from failing due to engine {1} already using backup engine.", monitoredEngine.Name, _currentFailedOverEngine.Name);
+                        }
+                    }
+                    else
+                    {
+                        monitoredEngine.isStalled = false;
+                    }
+                }
+            }
+        }
 
-        //                foreach (var tsMetric in _tsMetrics.OrderByDescending(m => m.Pid).Take(10))
-        //                {
-        //                    PrintToConsole("TS PID: {0}\tPacket Count: {1} \t\tCC Error Count: {2}\t", tsMetric.Pid,
-        //                        tsMetric.PacketCount, tsMetric.CcErrorCount);
-        //                }
-        //            }
+        private static void CheckForEngineRecovery()
+        {
+            if (_currentFailedOverEngine != null)
+            {
+                var timeSinceLastStall = DateTime.Now.Subtract(_currentFailedOverEngine.lastStallTime);
+                if (timeSinceLastStall > _airRecoveryTime)
+                {
+                    LogMessage($@"Air engine {_currentFailedOverEngine.Name} is considered recovered after passing the recovery timeout period");
+                    _currentFailedOverEngine.isStalled = false;
+                    _currentFailedOverEngine = null;
+                }
+            }
+        }
 
-        //        }
+        private static void TriggerEngineFailover(PlayoutEngine engine)
+        {
+            engine.lastFailoverTime = DateTime.Now;
+            _currentFailedOverEngine = engine;
+            _lastEngineLoadedOntoBackup = engine;
 
-        //        Thread.Sleep(20);
-        //    }
+            LogMessage($@"Air engine {_currentFailedOverEngine.Name} is currently in fail over state (and will block any other fail over).");
 
-        //    LogMessage("Logging stopped.");
-        //}
+            var fileToCopy = engine.Playlist;
+            var sourceFilePathBackupVersion = engine.Playlist.Replace(".MCRActive",".bak");
+            
+            if(File.Exists(sourceFilePathBackupVersion))
+            {
+                fileToCopy = sourceFilePathBackupVersion;
+            }
+
+            if(!File.Exists(fileToCopy))
+            {
+                LogMessage("Cannot locate playlist {0} from engine {1}", fileToCopy, engine.Name);
+            }
+
+            LogMessage("Copying playlist {0} from engine {1} to backup engine {2}", fileToCopy, engine.Name, _backupEngine.Name);
+        
+            File.Copy(fileToCopy, _backupEngine.Playlist + "Approved");
+
+            if (Options.ShutdownOnFailover)
+            {
+                LogMessage("Shutdown on fail-over mode is enabled - watchdog now quitting after failover.");
+
+                _pendingExit = true;
+            }
+        }
 
         private static void LoadConfig()
         {
             var doc = XElement.Load("settings.xml");
+
+            var globalSettings = doc.Descendants("configuration").Descendants("globalSettings").FirstOrDefault();
+
+            Options.AdapterAddress = globalSettings.Attribute("multicastListenAdapter").Value;
+            var timeoutSeconds = int.Parse(globalSettings.Attribute("airEngineMulticastTimeout").Value);
+            _airTimeout = new TimeSpan(0,0, timeoutSeconds);
+            var recoverySeconds = int.Parse(globalSettings.Attribute("airEngineRecoveryStablePeriod").Value);
+            _airRecoveryTime = new TimeSpan(0, 0, recoverySeconds);
+            Options.ShutdownOnFailover = bool.Parse(globalSettings.Attribute("shutdownOnFailover").Value);
+
+            var logfileName = doc.Descendants("configuration").Descendants("logFile").Descendants("FileName").FirstOrDefault();
+
+            Options.LogFile = logfileName.Value;
 
             var engines = doc.Descendants("configuration").Descendants("playoutEngines").Descendants("engine");
 
@@ -241,52 +330,14 @@ namespace AirFailoverWatchdog
                 _monitoredEngines.Add(playoutEngine);
             }
 
-
-        }
-
-        private static void StartListeningToNetwork(string multicastAddress, int multicastGroup,
-            string listenAdapter = "")
-        {
-
-            var listenAddress = IsNullOrEmpty(listenAdapter) ? IPAddress.Any : IPAddress.Parse(listenAdapter);
-
-            var localEp = new IPEndPoint(listenAddress, multicastGroup);
-
-            _udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _udpClient.Client.ReceiveBufferSize = 1024*256;
-            _udpClient.ExclusiveAddressUse = false;
-            _udpClient.Client.Bind(localEp);
-            _networkMetric.UdpClient = _udpClient;
-
-            var parsedMcastAddr = IPAddress.Parse(multicastAddress);
-            _udpClient.JoinMulticastGroup(parsedMcastAddr);
-
-            var ts = new ThreadStart(delegate
+            var backupengineSettings = doc.Descendants("configuration").Descendants("backupEngine").Descendants("engine").FirstOrDefault();
+            
+            _backupEngine = new PlayoutEngine
             {
-                ReceivingNetworkWorkerThread(_udpClient, localEp);
-            });
-
-            var receiverThread = new Thread(ts) {Priority = ThreadPriority.Highest};
-
-            receiverThread.Start();
-        }
-
-        private static void ReceivingNetworkWorkerThread(UdpClient client, IPEndPoint localEp)
-        {
-            while (_receiving)
-            {
-                var data = client.Receive(ref localEp);
-                if (data == null) continue;
-                try
-                {
-                    _networkMetric.AddPacket(data);
-                    _rtpMetric.AddPacket(data);              
-                }
-                catch (Exception ex)
-                {
-                    LogMessage($@"Unhandled exception withing network receiver: {ex.Message}");
-                }
-            }
+                Name = backupengineSettings.Attribute("name").Value,
+                Playlist = backupengineSettings.Attribute("playlist").Value,
+                MulticastUrl = backupengineSettings.Attribute("multicastUrl").Value
+            };
         }
 
         private static void Console_CancelKeyPress(object sender, ConsoleCancelEventArgs e)
@@ -296,33 +347,23 @@ namespace AirFailoverWatchdog
             e.Cancel = true;
         }
         
-        private static void RtpMetric_SequenceDiscontinuityDetected(object sender, EventArgs e)
+        private static void LogMessage(string message, params object[] arguments)
         {
-            LogMessage("Discontinuity in RTP sequence.");
-        }
+            var msg = Format(message, arguments);
 
-        private static void NetworkMetric_BufferOverflow(object sender, EventArgs e)
-        {
-            LogMessage("Network buffer > 99% - probably loss of data from overflow.");
-        }
-
-        private static void PrintToConsole(string message, params object[] arguments)
-        {
-            if (_suppressConsoleOutput) return;
+            if (!Options.SuppressOutput)
+            {
+                Console.WriteLine(msg);
+            }
             
-            Console.WriteLine(message, arguments);
-        }
-
-        private static void LogMessage(string message)
-        {
             try
             {
-                if (IsNullOrWhiteSpace(_logFile)) return;
+                if (IsNullOrWhiteSpace(Options.LogFile)) return;
 
-                var fs = new FileStream(_logFile, FileMode.Append, FileAccess.Write);
+                var fs = new FileStream(Options.LogFile, FileMode.Append, FileAccess.Write);
                 var sw = new StreamWriter(fs);
 
-                sw.WriteLine("{0} - {1}", DateTime.Now, message);
+                sw.WriteLine("{0} - {1}", DateTime.Now, msg);
 
                 sw.Close();
                 fs.Close();
@@ -344,18 +385,17 @@ namespace AirFailoverWatchdog
 
             _airFailoverWatchdogApi = new AirFailoverWatchdogApi
             {
-                NetworkMetric = _networkMetric,
-                RtpMetric = _rtpMetric
+
             };
 
             _airFailoverWatchdogApi.Command += AirFailoverWatchdogApiCommand;
-            
+
             _serviceHost = new ServiceHost(_airFailoverWatchdogApi, baseAddress);
             var webBinding = new WebHttpBinding();
 
-            var serviceEndpoint = new ServiceEndpoint(ContractDescription.GetContract(typeof (IAirFailoverWatchdogApi)))
+            var serviceEndpoint = new ServiceEndpoint(ContractDescription.GetContract(typeof(IAirFailoverWatchdogApi)))
             {
-                Binding = webBinding, 
+                Binding = webBinding,
                 Address = new EndpointAddress(baseAddress)
             };
 
@@ -367,11 +407,11 @@ namespace AirFailoverWatchdog
                 DefaultOutgoingRequestFormat = WebMessageFormat.Json,
                 HelpEnabled = true
             };
-            
+
             serviceEndpoint.Behaviors.Add(webBehavior);
-            
+
             //Metadata Exchange
-            var serviceBehavior = new ServiceMetadataBehavior {HttpGetEnabled = true};
+            var serviceBehavior = new ServiceMetadataBehavior { HttpGetEnabled = true };
             _serviceHost.Description.Behaviors.Add(serviceBehavior);
 
             try
@@ -389,33 +429,18 @@ namespace AirFailoverWatchdog
                     ex.Message +
                     "\n\nHit enter to continue without services.\n\n";
 
-                Console.WriteLine(msg);
+                LogMessage(msg);
 
                 Console.ReadLine();
-
-                LogMessage(msg);
             }
         }
-
-        private static void SetupMetrics()
-        {
-            _startTime = DateTime.UtcNow;
-            _networkMetric = new NetworkMetric();
-            _rtpMetric = new RtpMetric();
-            _rtpMetric.SequenceDiscontinuityDetected += RtpMetric_SequenceDiscontinuityDetected;
-            _networkMetric.BufferOverflow += NetworkMetric_BufferOverflow;
-            _networkMetric.UdpClient = _udpClient;
-        }
-
+        
         private static void AirFailoverWatchdogApiCommand(object sender, CommandEventArgs e)
         {
             switch (e.Command)
             {
                 case (CommandType.ResetMetrics):
-                    SetupMetrics();
-
-                    _airFailoverWatchdogApi.NetworkMetric = _networkMetric;
-                    _airFailoverWatchdogApi.RtpMetric = _rtpMetric;
+                   //metrics don't exist in this app... just left this boilerplate code for later to copy from
 
                     break;
                 default:

@@ -9,7 +9,11 @@ namespace AirFailoverWatchdog
         [Option('q', "quiet", Required = false, DefaultValue = false,
         HelpText = "Don't print anything to the console")]
         public bool SuppressOutput { get; set; }
-    
+
+        [Option('s', "shutdownonfailover", Required = false, DefaultValue = false,
+        HelpText = "Once any engine fails, close the app")]
+        public bool ShutdownOnFailover { get; set; }
+
         [Option('l', "logfile", Required = false,
         HelpText = "Optional file to record events to.")]
         public string LogFile { get; set; }
@@ -26,10 +30,9 @@ namespace AirFailoverWatchdog
         HelpText = "Optional service URL for REST web services (must change if running multiple instances with web services enabled.")]
         public string ServiceUrl { get; set; }
 
-
-        [Option('c', "configpath", Required = false,
-        HelpText = "Path to the config file to load")]
-        public string ConfigPath { get; set; }
+        [Option('c', "configfile", Required = false,
+        HelpText = "Path to the config file to load - if not set, assumes this is a file named settings.xml next to EXE.")]
+        public string ConfigFile { get; set; }
 
         [ParserState]
         public IParserState LastParserState { get; set; }

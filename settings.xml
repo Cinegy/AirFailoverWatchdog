@@ -1,12 +1,78 @@
 ﻿<?xml version="1.0" encoding="utf-8" ?>
 <appSettings>
   <configuration>
+    <!--
+    globalSettings parameters:
+   
+    multicastListenAdapter = IP address of the adapter to listen for multicasts (if empty or missing, tries any adapter).
+    airEngineMulticastTimeout = Period (in seconds) of multicast 'silence' to consider Air engine output failed.
+    airEngineRecoveryStablePeriod = Period (in seconds) of multicast without timeouts to consider engine recovered (recovery will 
+                                      not stop backup engine operation, but will allow subsequent playlist replacement by other failures).
+    shutdownOnFailover = If a failover event happens, once failed, the watchdog can terminate to prevent flapping, and will need to be restarted 
+                          as part of operating procedures for recovering from a failover
+                                      
+    -->
+
+    <globalSettings 
+      multicastListenAdapter="10.10.10.1" 
+      airEngineMulticastTimeout="2" 
+      airEngineRecoveryStablePeriod="10"
+      shutdownOnFailover="false"
+    />
+
+    <!--
+    logFile parameters:
+    
+    FileName = Name with path of file to write output (if empty, will not log to file)
+    -->
+    
+    <logFile>
+      <FileName>c:\temp\AirWatchDog.log</FileName>
+    </logFile>
+    
+    <!--
+    webServices parameters:
+    
+    NOTE- NOT YET IMPLEMENTED!!
+    
+    enabled = Enable Web Services (available on http://localhost:8124/failover by default).
+    serviceUrl = Optional service URL for REST web services (must change if running multiple instances with web services enabled on a single machine).
+    
+    -->
+    
+    <webServices 
+      enabled="false" 
+      serviceUrl="http://localhost:8124/failover" 
+    />
+    
+    <!--
+    playoutEngines parameters:
+    
+    A list of engine, defining what to monitor, and where to read log files from:
+    
+    name = Friendly name to display in logs and on screen (does not need to match anything elsewhere, but can make life easier!)
+    playlist = Path to MCRActive playlist used by the Air Control connected to this engine. This will be used as the source when activing the backup.
+    multicastUrl = Multicast Air output to monitor for activity - will not analyse data, just check that packets arrive regularly - alarms are raised if exceeding the timeout.
+    
+    -->
+    
     <playoutEngines>
-      <engine name="Air1" playlist="c:\data\air1.mcractive" multicastUrl="rtp://@239.1.1.1:1234"/>
+      <engine name="Air1" playlist="C:\Users\Lewis\Documents\Air-10.1ntschd.MCRActive" multicastUrl="rtp://@239.1.1.1:1234"/>
       <engine name="Air2" playlist="c:\data\air2.mcractive" multicastUrl="rtp://@239.1.1.2:1234"/>
     </playoutEngines>
+
+    <!--
+    backupEngine paramters:
+    
+    A single Air engine which will be targetted to automatically take over the list of a failed engine. The list will be copied and use collaboration mode to replace whatever is in the 
+    backup engine at point of failure. An operator, when available, shall then either take over that engine (and disconnect the Air Control that should run on the backup engine) and take
+    interactive control - or will recover the failed channel and continue as before. The backup channel will then be eligible for future failover once the 'stable' period of multicast data
+    has passed. However, an operator should review the recovered output is good (not just bars or blue). 
+    
+    -->
     <backupEngine>
-      <engine name="Air4" playlist="c:\data\air4.mcractive" multicastUrl="rtp://@239.1.1.2:1234"/>
+      <engine name="Air4" playlist="c:\temp\air4.mcractive" multicastUrl="rtp://@239.1.1.4:1234"/>
     </backupEngine>
+    
   </configuration>
 </appSettings>
