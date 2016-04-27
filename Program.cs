@@ -290,7 +290,7 @@ namespace AirFailoverWatchdog
 
             LogMessage("Copying playlist {0} from engine {1} to backup engine {2}", fileToCopy, engine.Name, _backupEngine.Name);
         
-            File.Copy(fileToCopy, _backupEngine.Playlist + "Approved",true);
+            File.Copy(fileToCopy, _backupEngine.Playlist + ".Approved",true);
 
             if (Options.ShutdownOnFailover)
             {
