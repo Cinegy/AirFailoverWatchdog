@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("TsAnalyser")]
-[assembly: AssemblyDescription("RTP and TS Analyser")]
+[assembly: AssemblyTitle("AirFailoverWatchdog")]
+[assembly: AssemblyDescription("Air Failover Watchdog")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Cinegy GmbH")]
-[assembly: AssemblyProduct("TsAnalyser")]
+[assembly: AssemblyProduct("AirFailoverWatchdog")]
 [assembly: AssemblyCopyright("Copyright © Cinegy GmbH 2016")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
