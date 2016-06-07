@@ -126,7 +126,8 @@ namespace AirFailoverWatchdog
                 _udpClient.Client.Bind(localEp);
                
                 var parsedMcastAddr = IPAddress.Parse(engine.multicastAddress);
-                _udpClient.JoinMulticastGroup(parsedMcastAddr);
+
+                _udpClient.JoinMulticastGroup(parsedMcastAddr, listenAddress);
 
                 while (true)
                 {
