@@ -15,7 +15,7 @@ It's a decent, simple solution that is designed to be reliable rather than overl
 
 Just to make your life easier, we auto-build this using AppVeyor - here is how we are doing right now: 
 
-[![Build status](https://ci.appveyor.com/api/projects/status/3ea6ew30q6gsmoh9?svg=true](https://ci.appveyor.com/project/cinegy/airfailoverwatchdog))
+[![Build status](https://ci.appveyor.com/api/projects/status/3ea6ew30q6gsmoh9?svg=true)](https://ci.appveyor.com/project/cinegy/airfailoverwatchdog)
 
 You can check out the latest compiled binary from the master or pre-master code here:
 
