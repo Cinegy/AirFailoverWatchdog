@@ -14,8 +14,7 @@ build:
   verbosity: minimal
 after_build:
 - cmd: >-
-    7z a AirFailoverWatchdog-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\bin\release\AirFailoverWatchdog.exe
-    7z a AirFailoverWatchdog-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\bin\release\settings.xml
+    7z a AirFailoverWatchdog-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\bin\release\AirFailoverWatchdog.exe %APPVEYOR_BUILD_FOLDER%\bin\release\settings.xml
 
     appveyor PushArtifact AirFailoverWatchdog-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip
     
